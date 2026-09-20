@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
@@ -8,7 +10,16 @@ from app.db.session import Base, engine
 
 settings = get_settings()
 
-app = FastAPI(title="DocMind API")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    with engine.begin() as conn:
+        conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+    Base.metadata.create_all(bind=engine)
+    yield
+
+
+app = FastAPI(title="DocMind API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -20,13 +31,6 @@ app.add_middleware(
 
 app.include_router(documents.router)
 app.include_router(chat.router)
-
-
-@app.on_event("startup")
-def on_startup():
-    with engine.begin() as conn:
-        conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-    Base.metadata.create_all(bind=engine)
 
 
 @app.get("/api/health")

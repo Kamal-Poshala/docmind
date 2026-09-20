@@ -18,4 +18,6 @@ def chunk_text(text: str, chunk_size: int = 800, overlap: int = 150) -> list[str
         if end >= len(text):
             break
         start = max(end - overlap, start + 1)
+        while start < end and not text[start - 1].isspace():
+            start += 1
     return chunks
