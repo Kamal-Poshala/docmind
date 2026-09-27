@@ -13,7 +13,7 @@ This is a portfolio project built to demonstrate:
 ## Architecture
 
 ```
-frontend (Next.js)  --->  backend (FastAPI)  --->  Anthropic API (Claude, tool use)
+frontend (Next.js)  --->  backend (FastAPI)  --->  LLM provider (Gemini by default, tool use)
                                 |
                                 v
                           Postgres + pgvector
@@ -21,7 +21,7 @@ frontend (Next.js)  --->  backend (FastAPI)  --->  Anthropic API (Claude, tool u
 ```
 
 1. A document is uploaded, text is extracted (PDF/plain text), split into overlapping chunks, embedded locally with `sentence-transformers`, and stored in Postgres with `pgvector`.
-2. A chat message is sent to the backend, which runs an agent loop against the Anthropic API: the model can call a `search_documents` tool (vector similarity search) or `list_documents` before answering.
+2. A chat message is sent to the backend, which runs an agent loop against the configured LLM provider: the model can call a `search_documents` tool (vector similarity search) or `list_documents` before answering.
 3. The final answer streams back to the frontend over HTTP as it's generated.
 
 ## Tech stack
@@ -30,7 +30,7 @@ frontend (Next.js)  --->  backend (FastAPI)  --->  Anthropic API (Claude, tool u
 |------------|------|
 | Frontend   | Next.js (App Router), TypeScript, Tailwind CSS |
 | Backend    | FastAPI, SQLAlchemy |
-| LLM        | Anthropic API (Claude), tool use / agent loop |
+| LLM        | Provider-agnostic tool-use agent loop: Gemini (default, free tier), Anthropic, Groq, OpenRouter, Ollama, or any OpenAI-compatible API |
 | Embeddings | `sentence-transformers` (local, no API key needed) |
 | Vector DB  | Postgres + `pgvector` |
 
@@ -48,7 +48,7 @@ docker compose up -d
 cd backend
 python -m venv .venv && .venv\Scripts\activate   # or `source .venv/bin/activate` on macOS/Linux
 pip install -r requirements.txt
-cp .env.example .env   # then add your ANTHROPIC_API_KEY
+cp .env.example .env   # then add your LLM_API_KEY (see "Choosing an LLM provider")
 uvicorn app.main:app --reload
 ```
 
@@ -63,13 +63,28 @@ npm run dev
 
 Open http://localhost:3000, upload a PDF or text file, and start asking questions about it.
 
+## Choosing an LLM provider
+
+The agent loop is provider-agnostic. Set `LLM_PROVIDER` in `backend/.env`:
+
+| `LLM_PROVIDER`      | Key from | Default model |
+|---------------------|----------|---------------|
+| `gemini` (default)  | [Google AI Studio](https://aistudio.google.com/apikey), has a free tier | `gemini-3.5-flash-lite` |
+| `anthropic`         | [Anthropic Console](https://console.anthropic.com) (paid) | `claude-sonnet-5` |
+| `groq`              | [Groq Console](https://console.groq.com) | set `LLM_MODEL` |
+| `openrouter`        | [OpenRouter](https://openrouter.ai) | set `LLM_MODEL` |
+| `ollama`            | none (runs locally) | set `LLM_MODEL` (a tool-calling model, e.g. `llama3.1`) |
+| `openai_compatible` | any | set `LLM_MODEL` and `LLM_BASE_URL` |
+
+`LLM_MODEL` and `LLM_BASE_URL` override the defaults for any provider. Model lineups change often, so check the provider's docs if a default is rejected.
+
 ## Project structure
 
 ```
 docmind/
   backend/
     app/
-      agents/     # tool definitions + Claude tool-use loop
+      agents/     # tool definitions, provider-agnostic agent loop, LLM providers
       api/        # FastAPI routers (documents, chat)
       core/       # settings
       db/         # SQLAlchemy models + session

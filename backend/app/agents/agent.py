@@ -1,12 +1,9 @@
 from collections.abc import Generator
 
-from anthropic import Anthropic
 from sqlalchemy.orm import Session
 
+from app.agents.llm import ToolCall, TurnEnd
 from app.agents.tools import TOOL_DEFINITIONS, run_tool
-from app.core.config import get_settings
-
-settings = get_settings()
 
 SYSTEM_PROMPT = (
     "You are DocMind, an assistant that answers questions grounded in the user's uploaded "
@@ -15,36 +12,36 @@ SYSTEM_PROMPT = (
     "documents don't contain the answer, say so honestly instead of guessing."
 )
 
+MAX_TOOL_ROUNDS = 5
 
-def stream_agent_reply(db: Session, messages: list[dict]) -> Generator[str, None, None]:
-    client = Anthropic(api_key=settings.anthropic_api_key)
+
+def _execute_tool(db: Session, call: ToolCall) -> str:
+    try:
+        return run_tool(db, call.name, call.input)
+    except Exception as exc:
+        return f"Error running tool {call.name}: {exc}"
+
+
+def stream_agent_reply(db: Session, messages: list[dict], provider) -> Generator[str, None, None]:
     conversation = list(messages)
 
-    while True:
-        final_message = None
-        with client.messages.stream(
-            model=settings.anthropic_model,
-            max_tokens=1024,
-            system=SYSTEM_PROMPT,
-            messages=conversation,
-            tools=TOOL_DEFINITIONS,
-        ) as stream:
-            for text in stream.text_stream:
-                yield text
-            final_message = stream.get_final_message()
+    for _ in range(MAX_TOOL_ROUNDS):
+        turn = None
+        for event in provider.stream_turn(SYSTEM_PROMPT, conversation, TOOL_DEFINITIONS):
+            if isinstance(event, TurnEnd):
+                turn = event
+            else:
+                yield event
 
         conversation.append(
-            {"role": "assistant", "content": [block.model_dump() for block in final_message.content]}
+            {"role": "assistant", "content": turn.text, "tool_calls": turn.tool_calls}
         )
+        if not turn.tool_calls:
+            return
 
-        if final_message.stop_reason != "tool_use":
-            break
+        for call in turn.tool_calls:
+            conversation.append(
+                {"role": "tool", "tool_call_id": call.id, "content": _execute_tool(db, call)}
+            )
 
-        tool_results = []
-        for block in final_message.content:
-            if block.type == "tool_use":
-                result = run_tool(db, block.name, block.input)
-                tool_results.append(
-                    {"type": "tool_result", "tool_use_id": block.id, "content": result}
-                )
-        conversation.append({"role": "user", "content": tool_results})
+    yield "\n\n[Stopped: the assistant made too many tool calls without answering.]"

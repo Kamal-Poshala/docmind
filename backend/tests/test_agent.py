@@ -1,88 +1,87 @@
-from types import SimpleNamespace
-
 from app.agents import agent
+from app.agents.llm import ToolCall, TurnEnd
 
 
-class FakeBlock:
-    def __init__(self, **fields):
-        self.__dict__.update(fields)
-
-    def model_dump(self):
-        return dict(self.__dict__)
-
-
-class FakeStream:
-    def __init__(self, texts, message):
-        self.text_stream = iter(texts)
-        self._message = message
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-    def get_final_message(self):
-        return self._message
-
-
-class FakeAnthropic:
-    """Scripted stand-in: each messages.stream() call returns the next scripted turn."""
+class FakeProvider:
+    """Scripted stand-in: each stream_turn() call replays the next scripted turn."""
 
     def __init__(self, turns):
         self._turns = iter(turns)
         self.calls = []
-        self.messages = SimpleNamespace(stream=self._stream)
 
-    def _stream(self, **kwargs):
-        self.calls.append({**kwargs, "messages": list(kwargs["messages"])})
-        texts, message = next(self._turns)
-        return FakeStream(texts, message)
-
-
-def install_fake_client(monkeypatch, turns):
-    fake = FakeAnthropic(turns)
-    monkeypatch.setattr(agent, "Anthropic", lambda api_key: fake)
-    return fake
+    def stream_turn(self, system, messages, tools):
+        self.calls.append(list(messages))
+        texts, end = next(self._turns)
+        yield from texts
+        yield end
 
 
-def test_plain_answer_streams_and_stops(monkeypatch):
-    message = SimpleNamespace(stop_reason="end_turn", content=[FakeBlock(type="text", text="Hi there")])
-    fake = install_fake_client(monkeypatch, [(["Hi ", "there"], message)])
-
-    tokens = list(agent.stream_agent_reply(db=None, messages=[{"role": "user", "content": "hello"}]))
-
-    assert tokens == ["Hi ", "there"]
-    assert len(fake.calls) == 1
+def collect(provider, messages=None, db=None):
+    messages = messages or [{"role": "user", "content": "hi"}]
+    return list(agent.stream_agent_reply(db, messages, provider))
 
 
-def test_tool_call_is_executed_then_answer_streams(monkeypatch):
-    tool_use = FakeBlock(
-        type="tool_use", id="tool_1", name="search_documents", input={"query": "refund policy"}
+def test_plain_answer_streams_and_stops():
+    provider = FakeProvider([(["Hi ", "there"], TurnEnd(text="Hi there"))])
+
+    assert collect(provider) == ["Hi ", "there"]
+    assert len(provider.calls) == 1
+
+
+def test_tool_call_is_executed_and_result_fed_back(monkeypatch):
+    call = ToolCall(id="tool_1", name="search_documents", input={"query": "refund policy"})
+    provider = FakeProvider(
+        [
+            ([], TurnEnd(text="", tool_calls=[call])),
+            (["Refunds take 5 days."], TurnEnd(text="Refunds take 5 days.")),
+        ]
     )
-    first = SimpleNamespace(stop_reason="tool_use", content=[tool_use])
-    second = SimpleNamespace(
-        stop_reason="end_turn", content=[FakeBlock(type="text", text="Refunds take 5 days.")]
-    )
-    fake = install_fake_client(monkeypatch, [([], first), (["Refunds take 5 days."], second)])
-
     executed = []
 
     def fake_run_tool(db, name, tool_input):
         executed.append((name, tool_input))
-        return '[{"content": "Refunds are processed within 5 days."}]'
+        return "Refunds are processed within 5 days."
 
     monkeypatch.setattr(agent, "run_tool", fake_run_tool)
 
-    tokens = list(
-        agent.stream_agent_reply(db=None, messages=[{"role": "user", "content": "refund policy?"}])
+    assert collect(provider) == ["Refunds take 5 days."]
+    assert executed == [("search_documents", {"query": "refund policy"})]
+
+    second_call_messages = provider.calls[1]
+    assert second_call_messages[-2]["role"] == "assistant"
+    assert second_call_messages[-2]["tool_calls"] == [call]
+    assert second_call_messages[-1] == {
+        "role": "tool",
+        "tool_call_id": "tool_1",
+        "content": "Refunds are processed within 5 days.",
+    }
+
+
+def test_tool_errors_are_returned_to_the_model(monkeypatch):
+    call = ToolCall(id="tool_1", name="search_documents", input={})
+    provider = FakeProvider(
+        [([], TurnEnd(text="", tool_calls=[call])), (["Sorry."], TurnEnd(text="Sorry."))]
     )
 
-    assert tokens == ["Refunds take 5 days."]
-    assert executed == [("search_documents", {"query": "refund policy"})]
-    assert len(fake.calls) == 2
+    def broken_tool(db, name, tool_input):
+        raise KeyError("query")
 
-    tool_result_message = fake.calls[1]["messages"][-1]
-    assert tool_result_message["role"] == "user"
-    assert tool_result_message["content"][0]["type"] == "tool_result"
-    assert tool_result_message["content"][0]["tool_use_id"] == "tool_1"
+    monkeypatch.setattr(agent, "run_tool", broken_tool)
+
+    assert collect(provider) == ["Sorry."]
+    tool_message = provider.calls[1][-1]
+    assert tool_message["role"] == "tool"
+    assert tool_message["content"].startswith("Error running tool search_documents")
+
+
+def test_tool_loop_is_capped(monkeypatch):
+    call = ToolCall(id="tool_1", name="search_documents", input={"query": "x"})
+    provider = FakeProvider(
+        [([], TurnEnd(text="", tool_calls=[call])) for _ in range(agent.MAX_TOOL_ROUNDS)]
+    )
+    monkeypatch.setattr(agent, "run_tool", lambda db, name, tool_input: "result")
+
+    output = collect(provider)
+
+    assert len(provider.calls) == agent.MAX_TOOL_ROUNDS
+    assert "too many tool calls" in "".join(output)

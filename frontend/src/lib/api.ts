@@ -47,7 +47,8 @@ export async function streamChat(
     body: JSON.stringify({ message, history }),
   });
   if (!res.ok || !res.body) {
-    throw new Error("Chat request failed");
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.detail ?? "Chat request failed");
   }
 
   const reader = res.body.getReader();

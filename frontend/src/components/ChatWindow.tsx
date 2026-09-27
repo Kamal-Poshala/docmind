@@ -32,13 +32,16 @@ export function ChatWindow() {
         });
         bottomRef.current?.scrollIntoView({ behavior: "smooth" });
       });
-    } catch {
+    } catch (err) {
+      const content =
+        err instanceof TypeError
+          ? "Could not reach the backend. Is it running?"
+          : err instanceof Error
+            ? err.message
+            : "Something went wrong.";
       setMessages((prev) => {
         const next = [...prev];
-        next[next.length - 1] = {
-          role: "assistant",
-          content: "Something went wrong. Is the backend running?",
-        };
+        next[next.length - 1] = { role: "assistant", content };
         return next;
       });
     } finally {
