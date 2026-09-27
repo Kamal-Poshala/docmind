@@ -26,7 +26,7 @@ def ingest_document(db: Session, filename: str, data: bytes) -> Document:
     db.flush()
 
     vectors = embed_texts(pieces)
-    for index, (content, vector) in enumerate(zip(pieces, vectors)):
+    for index, (content, vector) in enumerate(zip(pieces, vectors, strict=True)):
         db.add(Chunk(document_id=document.id, chunk_index=index, content=content, embedding=vector))
 
     db.commit()
