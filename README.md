@@ -102,8 +102,16 @@ docmind/
   docker-compose.yml  # Postgres + pgvector
 ```
 
+## Evaluating retrieval quality
+
+`backend/eval/retrieval_eval.py` runs a fixed set of queries against a small in-memory corpus and checks that the expected document is retrieved (hit_rate@3), using the real chunking and embedding pipeline. It needs no Postgres or LLM key, so it also runs as a normal test in CI (`tests/test_eval_retrieval.py`). Run it directly with:
+
+```bash
+cd backend && python -m eval.retrieval_eval
+```
+
 ## Possible next steps
 
 - Add authentication and per-user document isolation for a real multi-tenant deployment.
-- Add an eval harness that scores retrieval quality and answer faithfulness over a fixed test set.
+- Extend the eval harness to score answer faithfulness (e.g. LLM-as-judge) over full chat turns, not just retrieval.
 - Support additional file types (DOCX, HTML) and OCR for scanned PDFs.
