@@ -28,7 +28,7 @@ frontend (Next.js)  --->  backend (FastAPI)  --->  LLM provider (Gemini by defau
 
 | Layer      | Tech |
 |------------|------|
-| Frontend   | Next.js (App Router), TypeScript, Tailwind CSS |
+| Frontend   | Next.js (App Router), TypeScript, Tailwind CSS, tested with Vitest + React Testing Library |
 | Backend    | FastAPI, SQLAlchemy |
 | LLM        | Provider-agnostic tool-use agent loop: Gemini (default, free tier), Anthropic, Groq, OpenRouter, Ollama, or any OpenAI-compatible API |
 | Embeddings | `sentence-transformers` (local, no API key needed) |
