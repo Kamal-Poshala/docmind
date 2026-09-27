@@ -63,6 +63,10 @@ npm run dev
 
 Open http://localhost:3000, upload a PDF or text file, and start asking questions about it.
 
+### Or run the whole stack in Docker
+
+Once `backend/.env` has a real `LLM_API_KEY`, `docker compose up -d --build` builds and runs Postgres, the backend, and the frontend together (see `backend/Dockerfile`, `frontend/Dockerfile`). This is closer to how you'd deploy it; the steps above are better for day-to-day development since they give you hot reload.
+
 ## Choosing an LLM provider
 
 The agent loop is provider-agnostic. Set `LLM_PROVIDER` in `backend/.env`:

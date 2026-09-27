@@ -16,5 +16,33 @@ services:
       timeout: 5s
       retries: 10
 
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      # Overrides the .env value so the backend reaches Postgres by service name
+      # instead of localhost, which only makes sense on the host machine.
+      DATABASE_URL: postgresql+psycopg2://docmind:docmind@db:5432/docmind
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # Baked into the client bundle at build time, so it must be reachable from
+        # the browser on the host, not the Docker-internal "backend" hostname.
+        NEXT_PUBLIC_API_URL: http://localhost:8000
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+
 volumes:
   docmind_pgdata:
